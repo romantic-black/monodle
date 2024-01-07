@@ -30,7 +30,7 @@ class Trainer(object):
         self.lr_scheduler = lr_scheduler
         self.warmup_lr_scheduler = warmup_lr_scheduler
         self.logger = logger
-        self.epoch = 0
+        self.epoch = [0]
         self.writer = SummaryWriter(log_dir=os.path.join(self.cfg['log_dir'],
                                                          datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')))
 
