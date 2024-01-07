@@ -1,6 +1,6 @@
 import os
 import tqdm
-
+import datetime
 import torch
 import numpy as np
 import torch.nn as nn
@@ -9,6 +9,7 @@ from lib.helpers.save_helper import get_checkpoint_state
 from lib.helpers.save_helper import load_checkpoint
 from lib.helpers.save_helper import save_checkpoint
 from lib.losses.centernet_loss import compute_centernet3d_loss
+from torch.utils.tensorboard import SummaryWriter
 
 
 class Trainer(object):
@@ -30,6 +31,9 @@ class Trainer(object):
         self.warmup_lr_scheduler = warmup_lr_scheduler
         self.logger = logger
         self.epoch = 0
+        self.writer = SummaryWriter(log_dir=os.path.join(self.cfg['trainer']['log_dir'],
+                                                         datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')))
+
         self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
         # loading pretrain/resume model
@@ -87,6 +91,8 @@ class Trainer(object):
 
     def train_one_epoch(self):
         self.model.train()
+        stat_dict = {}
+        disp_dict = {}
         progress_bar = tqdm.tqdm(total=len(self.train_loader), leave=(self.epoch+1 == self.cfg['max_epoch']), desc='iters')
         for batch_idx, (inputs, targets, _) in enumerate(self.train_loader):
             inputs = inputs.to(self.device)
@@ -100,9 +106,68 @@ class Trainer(object):
             total_loss.backward()
             self.optimizer.step()
 
+            for key in stats_batch.keys():
+                if key not in stat_dict.keys():
+                    stat_dict[key] = 0
+
+                if isinstance(stats_batch[key], int):
+                    stat_dict[key] += (stats_batch[key])
+                else:
+                    stat_dict[key] += (stats_batch[key]).detach()
+
+            for key in stats_batch.keys():
+                if key not in disp_dict.keys():
+                    disp_dict[key] = 0
+                # disp_dict[key] += loss_terms[key]
+                if isinstance(stats_batch[key], int):
+                    disp_dict[key] += (stats_batch[key])
+                else:
+                    disp_dict[key] += (stats_batch[key]).detach()
+            if trained_batch % self.cfg['trainer']['disp_frequency'] == 0:
+                log_str = 'BATCH[%04d/%04d]' % (trained_batch, len(self.train_loader))
+                for key in sorted(disp_dict.keys()):
+                    disp_dict[key] = disp_dict[key] / self.cfg_train['disp_frequency']
+                    log_str += ' %s:%.4f,' % (key, disp_dict[key])
+                    disp_dict[key] = 0  # reset statistics
+                self.logger.info(log_str)
             progress_bar.update()
+            trained_batch = batch_idx + 1
         progress_bar.close()
+        for key in stat_dict.keys():
+            stat_dict[key] /= trained_batch
+            self.writer.add_scalar(f'train/{key}', stat_dict[key], self.epoch)
 
+    def record_val_loss(self):
 
+        self.model.eval()
+        stat_dict = {}
+        progress_bar = tqdm.tqdm(total=len(self.test_loader), leave=True, desc='Val Progress')
+        with torch.no_grad():
+            for batch_idx, (inputs, calibs, coord_ranges, targets, info) in enumerate(self.test_loader):
+                # load evaluation data and move data to current device.
+                if type(inputs) != dict:
+                    inputs = inputs.to(self.device)
+                else:
+                    for key in inputs.keys(): inputs[key] = inputs[key].to(self.device)
+                calibs = calibs.to(self.device)
+                coord_ranges = coord_ranges.to(self.device)
+                for key in targets.keys(): targets[key] = targets[key].to(self.device)
+                # the outputs of centernet
+                criterion = DIDLoss(self.epoch)
+                outputs = self.model(inputs, coord_ranges, calibs, targets, K=50)
+                total_loss, loss_terms = criterion(outputs, targets)
+                for key in loss_terms.keys():
+                    if key not in stat_dict.keys():
+                        stat_dict[key] = 0
 
-
+                    if isinstance(loss_terms[key], int):
+                        stat_dict[key] += (loss_terms[key])
+                    else:
+                        stat_dict[key] += (loss_terms[key]).detach()
+                trained_batch = batch_idx + 1
+                progress_bar.update()
+            progress_bar.close()
+            for key in stat_dict.keys():
+                stat_dict[key] /= trained_batch
+                self.writer.add_scalar(f'val/{key}', stat_dict[key], self.epoch)
+        return stat_dict

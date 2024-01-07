@@ -2,6 +2,7 @@ import os
 import numpy as np
 import torch.utils.data as data
 from PIL import Image
+import cv2 as cv
 
 from lib.datasets.utils import angle2class
 from lib.datasets.utils import gaussian_radius
@@ -13,6 +14,8 @@ from lib.datasets.kitti.kitti_utils import affine_transform
 from lib.datasets.kitti.kitti_eval_python.eval import get_official_eval_result
 from lib.datasets.kitti.kitti_eval_python.eval import get_distance_eval_result
 import lib.datasets.kitti.kitti_eval_python.kitti_common as kitti
+from tools.dataset_util import Dataset
+from tools.sample_util import SampleDatabase, merge_labels
 
 
 class KITTI_Dataset(data.Dataset):
@@ -46,16 +49,19 @@ class KITTI_Dataset(data.Dataset):
         self.idx_list = [x.strip() for x in open(self.split_file).readlines()]
 
         # path configuration
-        self.data_dir = os.path.join(self.root_dir, 'object', 'testing' if split == 'test' else 'training')
+        self.data_dir = os.path.join(self.root_dir, 'testing' if split == 'test' else 'training')
         self.image_dir = os.path.join(self.data_dir, 'image_2')
         self.depth_dir = os.path.join(self.data_dir, 'depth')
         self.calib_dir = os.path.join(self.data_dir, 'calib')
         self.label_dir = os.path.join(self.data_dir, 'label_2')
 
+        self.dataset = Dataset(split, root_dir)
+        self.database = SampleDatabase(cfg["database_dir"], self.idx_list, cfg["random_sample"])
         # data augmentation configuration
         self.data_augmentation = True if split in ['train', 'trainval'] else False
         self.random_flip = cfg.get('random_flip', 0.5)
         self.random_crop = cfg.get('random_crop', 0.5)
+        self.random_sample = cfg['random_sample']['prob']
         self.scale = cfg.get('scale', 0.4)
         self.shift = cfg.get('shift', 0.1)
 
@@ -107,12 +113,36 @@ class KITTI_Dataset(data.Dataset):
     def __len__(self):
         return self.idx_list.__len__()
 
+    def get_data(self, idx, use_aug=False, test=False):
+        dataset, database = self.dataset, self.database
+        calib = dataset.get_calib(idx)
+
+        if test:
+            labels = None
+            image = dataset.get_image(idx)
+            depth = np.zeros((image.shape[0], image.shape[1]), dtype=np.float32)
+        else:
+            image, depth = dataset.get_image_with_depth(idx, use_penet=False)
+            _, _, labels = dataset.get_bbox(idx, chosen_cls=["Car", 'Van', 'Truck', 'DontCare'])
+
+        if use_aug:
+            ground, non_ground = dataset.get_lidar_with_ground(idx, fov=True)
+            grid = dataset.get_grid(idx)
+            plane = dataset.get_plane(idx)
+            samples = database.get_samples(ground, non_ground, calib, plane, grid)
+            image, depth, samples = database.add_samples_to_scene(samples, image, depth, use_edge_blur=True)
+            labels = merge_labels(labels, samples, calib, image.shape)
+
+        return Image.fromarray(image), Image.fromarray(depth), labels, calib
 
     def __getitem__(self, item):
         #  ============================   get inputs   ===========================
         index = int(self.idx_list[item])  # index mapping, get real data id
         # image loading
-        img = self.get_image(index)
+        random_sample_flag = False
+        if self.data_augmentation and np.random.random() < self.random_sample:
+            random_sample_flag = True
+        img, d, objects, calib = self.get_data(index, use_aug=random_sample_flag, test=self.split == 'test')
         img_size = np.array(img.size)
         features_size = self.resolution // self.downsample    # W * H
 
@@ -152,8 +182,6 @@ class KITTI_Dataset(data.Dataset):
 
 
         #  ============================   get labels   ==============================
-        objects = self.get_label(index)
-        calib = self.get_calib(index)
 
         # computed 3d projected box
         if self.bbox2d_type == 'proj':

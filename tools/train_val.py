@@ -3,8 +3,9 @@ import sys
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 ROOT_DIR = os.path.dirname(BASE_DIR)
+#sys.path = sys.path[:-1]
 sys.path.append(ROOT_DIR)
-
+print(sys.path)
 import yaml
 import argparse
 import datetime
