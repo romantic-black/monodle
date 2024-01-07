@@ -31,7 +31,7 @@ class Trainer(object):
         self.warmup_lr_scheduler = warmup_lr_scheduler
         self.logger = logger
         self.epoch = 0
-        self.writer = SummaryWriter(log_dir=os.path.join(self.cfg['trainer']['log_dir'],
+        self.writer = SummaryWriter(log_dir=os.path.join(self.cfg['log_dir'],
                                                          datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')))
 
         self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
@@ -123,7 +123,7 @@ class Trainer(object):
                     disp_dict[key] += (stats_batch[key])
                 else:
                     disp_dict[key] += (stats_batch[key]).detach()
-            if trained_batch % self.cfg['trainer']['disp_frequency'] == 0:
+            if trained_batch % self.cfg['disp_frequency'] == 0:
                 log_str = 'BATCH[%04d/%04d]' % (trained_batch, len(self.train_loader))
                 for key in sorted(disp_dict.keys()):
                     disp_dict[key] = disp_dict[key] / self.cfg_train['disp_frequency']
@@ -153,9 +153,8 @@ class Trainer(object):
                 coord_ranges = coord_ranges.to(self.device)
                 for key in targets.keys(): targets[key] = targets[key].to(self.device)
                 # the outputs of centernet
-                criterion = DIDLoss(self.epoch)
                 outputs = self.model(inputs, coord_ranges, calibs, targets, K=50)
-                total_loss, loss_terms = criterion(outputs, targets)
+                total_loss, loss_terms = compute_centernet3d_loss(outputs, targets)
                 for key in loss_terms.keys():
                     if key not in stat_dict.keys():
                         stat_dict[key] = 0
