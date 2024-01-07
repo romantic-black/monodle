@@ -2,7 +2,9 @@ random_seed: 444
 
 dataset:
   type: &dataset_type 'KITTI'
-  batch_size: 16
+  root_dir: '/mnt/e/DataSet/kitti/'
+  database_dir: '/mnt/e/DataSet/kitti/kitti_drx_database'
+  batch_size: 24
   use_3d_center: True
   class_merging: False
   use_dontcare: False
@@ -11,6 +13,16 @@ dataset:
   writelist: ['Car']
   random_flip: 0.5
   random_crop: 0.5
+  random_sample:
+    prob: 0.5
+    database_num: -1
+    sample_num: 10
+    sample_constraint:
+      max_z2y: 0.5
+      max_x2z: 10
+      max_dz: 10
+      max_rate: 1.2
+      min_rate: 0.5
   scale: 0.4
   shift: 0.1
 
@@ -34,6 +46,7 @@ trainer:
   max_epoch: 140
   gpu_ids: 0, 1
   save_frequency: 10 # checkpoint save interval (in epoch)
+  disp_frequency: 150
   # resume_model: 'checkpoints/checkpoint_epoch_70.pth'
 
 
